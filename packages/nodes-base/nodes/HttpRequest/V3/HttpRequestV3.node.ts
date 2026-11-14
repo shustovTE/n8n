@@ -1169,7 +1169,7 @@ export class HttpRequestV3 implements INodeType {
 								);
 							} else {
 								returnItems.push({
-									json: response,
+									json: response ?? {},
 									pairedItem: {
 										item: itemIndex,
 									},

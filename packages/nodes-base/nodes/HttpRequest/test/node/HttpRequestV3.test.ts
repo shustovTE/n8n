@@ -899,6 +899,113 @@ describe('HttpRequestV3', () => {
 		});
 	});
 
+	describe('JSON responses without a body', () => {
+		const setup = (pagination: boolean, fullResponse: boolean) => {
+			(executeFunctions.getInputData as Mock).mockReturnValue([{ json: {} }]);
+			(executeFunctions.getNodeParameter as Mock).mockImplementation(
+				(paramName: string, _itemIndex: number, fallback: unknown) => {
+					switch (paramName) {
+						case 'method':
+							return 'GET';
+						case 'url':
+							return baseUrl;
+						case 'authentication':
+							return 'none';
+						case 'options':
+							return {
+								...options,
+								response: { response: { responseFormat: 'json', fullResponse } },
+							};
+						case 'options.pagination.pagination':
+							return pagination
+								? {
+										paginationMode: 'responseContainsNextURL',
+										nextURL: '={{ $response.body?.next }}',
+										paginationCompleteWhen: 'responseIsEmpty',
+										requestInterval: 0,
+									}
+								: fallback;
+						case 'options.response.response.responseFormat':
+							return 'json';
+						case 'options.response.response.fullResponse':
+							return fullResponse;
+						default:
+							return fallback;
+					}
+				},
+			);
+		};
+
+		it.each([
+			{ pagination: false, fullResponse: false, body: undefined },
+			{ pagination: false, fullResponse: true, body: undefined },
+			{ pagination: true, fullResponse: false, body: undefined },
+			{ pagination: true, fullResponse: true, body: undefined },
+			{ pagination: false, fullResponse: false, body: null },
+		])(
+			'should return valid JSON for an empty response (pagination: $pagination, fullResponse: $fullResponse, body: $body)',
+			async ({ pagination, fullResponse, body }) => {
+				setup(pagination, fullResponse);
+				const response = {
+					body,
+					headers: { 'content-type': 'application/json' },
+					statusCode: 204,
+					statusMessage: 'No Content',
+				};
+				(executeFunctions.helpers.request as Mock).mockResolvedValue(response);
+				(executeFunctions.helpers.requestWithAuthenticationPaginated as Mock).mockResolvedValue([
+					response,
+				]);
+
+				const result = await node.execute.call(executeFunctions);
+
+				expect(result).toStrictEqual([
+					[{ json: fullResponse ? response : {}, pairedItem: { item: 0 } }],
+				]);
+				expect(executeFunctions.helpers.request).toHaveBeenCalledTimes(pagination ? 0 : 1);
+				expect(executeFunctions.helpers.requestWithAuthenticationPaginated).toHaveBeenCalledTimes(
+					pagination ? 1 : 0,
+				);
+			},
+		);
+
+		it.each([false, true])(
+			'should keep earlier pages when the last page has no body (fullResponse: %s)',
+			async (fullResponse) => {
+				setup(true, fullResponse);
+				const firstResponse = {
+					body: { items: [{ id: 1 }] },
+					headers: { 'content-type': 'application/json' },
+					statusCode: 200,
+					statusMessage: 'OK',
+				};
+				const lastResponse = {
+					body: undefined,
+					headers: { 'content-type': 'application/json' },
+					statusCode: 204,
+					statusMessage: 'No Content',
+				};
+				(executeFunctions.helpers.requestWithAuthenticationPaginated as Mock).mockResolvedValue([
+					firstResponse,
+					lastResponse,
+				]);
+
+				const result = await node.execute.call(executeFunctions);
+
+				expect(result).toStrictEqual([
+					[
+						{ json: fullResponse ? firstResponse : firstResponse.body, pairedItem: { item: 0 } },
+						{ json: fullResponse ? lastResponse : {}, pairedItem: { item: 0 } },
+					],
+				]);
+				expect(executeFunctions.helpers.request).not.toHaveBeenCalled();
+				expect(executeFunctions.helpers.requestWithAuthenticationPaginated).toHaveBeenCalledTimes(
+					1,
+				);
+			},
+		);
+	});
+
 	describe('Continued request errors', () => {
 		beforeEach(() => {
 			(executeFunctions.getNode as Mock).mockReturnValue({
